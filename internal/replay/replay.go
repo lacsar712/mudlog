@@ -11,9 +11,6 @@ import (
 )
 
 func FromJournal(e journal.Entry, now time.Time) (job.Job, error) {
-	if len(e.Body) == 0 {
-		return job.Job{}, fmt.Errorf("journal entry %s has no stored body", e.RelayID)
-	}
 	return job.Job{
 		FrameID:   e.FrameID,
 		RelayID:   idgen.New("rly", now),
