@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MudLog</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>MudLog</h1>
+    <p class="sub">wellsite frame relay · lithology / lag-depth · WITS outbound · retry / circuit / DLQ</p>
+    <div id="status" class="status">connecting…</div>
+  </header>
+  <main>
+    <section>
+      <h2>Geology stores</h2>
+      <form id="store-form">
+        <input name="name" placeholder="name" required />
+        <input name="url" placeholder="https://geology.example/wits" required />
+        <input name="secret" placeholder="outbound secret" required minlength="8" />
+        <input name="type_prefixes" placeholder="prefixes, e.g. lithology." />
+        <button type="submit">Add</button>
+      </form>
+      <div id="stores"></div>
+    </section>
+    <section>
+      <h2>Post frame</h2>
+      <p class="hint">Uses rig secret <code>dev-rig-secret</code> and HMAC-SHA256 headers.</p>
+      <form id="frame-form">
+        <input name="type" value="lithology.cuttings" required />
+        <input name="wellbore" value="W-12H" />
+        <textarea name="payload" rows="8">{ "lithology": { "code": "SS", "percent": 80 }, "lag_depth": { "measured_m": 1842.5, "lag_minutes": 18 }, "rop_m_hr": 12.4 }</textarea>
+        <button type="submit">Send</button>
+      </form>
+      <pre id="frame-result"></pre>
+    </section>
+    <section>
+      <h2>Journal</h2>
+      <button type="button" id="refresh">Refresh</button>
+      <div id="journal"></div>
+    </section>
+    <section>
+      <h2>Dead letter</h2>
+      <div id="dlq"></div>
+    </section>
+    <section>
+      <h2>Cuttings sink</h2>
+      <div id="sink"></div>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

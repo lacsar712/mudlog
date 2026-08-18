@@ -1,0 +1,201 @@
+const $ = (id) => document.getElementById(id);
+
+async function hmacHex(secret, message) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const buf = await crypto.subtle.sign("HMAC", key, enc.encode(message));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function nonce() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function idemKey() {
+  return "idemp-" + nonce();
+}
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
+  if (!res.ok) {
+    throw new Error((data && data.error) || res.statusText);
+  }
+  return data;
+}
+
+async function refreshMeta() {
+  try {
+    const m = await api("/api/v1/meta");
+    $("status").className = "status";
+    $("status").textContent = `ok · queue ${m.queue_depth} · dlq ${m.dlq} · ${m.go}`;
+  } catch (err) {
+    $("status").className = "status bad";
+    $("status").textContent = String(err);
+  }
+}
+
+async function refreshStores() {
+  const data = await api("/api/v1/stores");
+  $("stores").innerHTML = (data.stores || []).map((d) => `
+    <div class="row">
+      <div>
+        <strong>${escapeHtml(d.name)}</strong>
+        <div class="muted">${escapeHtml(d.id)} · ${escapeHtml(d.url)}</div>
+      </div>
+      <button data-toggle="${d.id}" data-enabled="${d.enabled}">${d.enabled ? "Disable" : "Enable"}</button>
+    </div>
+  `).join("");
+}
+
+async function refreshJournal() {
+  const data = await api("/api/v1/journal");
+  $("journal").innerHTML = (data.entries || []).map((e) => `
+    <div class="row">
+      <div>
+        <strong>${escapeHtml(e.kind)}</strong> ${e.status || ""} ${escapeHtml(e.type || "")}
+        <div class="muted">${escapeHtml(e.relay_id)} · attempt ${e.attempt} · ${escapeHtml(e.note || e.error || "")}</div>
+      </div>
+    </div>
+  `).join("") || '<div class="muted">empty</div>';
+}
+
+async function refreshDlq() {
+  const data = await api("/api/v1/dlq");
+  $("dlq").innerHTML = (data.items || []).map((it) => `
+    <div class="row">
+      <div>
+        <strong>${escapeHtml(it.reason)}</strong>
+        <div class="muted">${escapeHtml(it.relay_id)}</div>
+      </div>
+      <button data-replay="${it.relay_id}">Replay</button>
+    </div>
+  `).join("") || '<div class="muted">empty</div>';
+}
+
+async function refreshSink() {
+  const data = await api("/api/v1/cuttings/recent");
+  $("sink").innerHTML = (data.received || []).map((r) => `
+    <div class="row">
+      <div>
+        <strong>${escapeHtml(r.relay_id || "")}</strong>
+        <div class="muted">${escapeHtml(JSON.stringify(r.body))}</div>
+      </div>
+    </div>
+  `).join("") || '<div class="muted">empty</div>';
+}
+
+async function refreshAll() {
+  await refreshMeta();
+  await Promise.all([refreshStores(), refreshJournal(), refreshDlq(), refreshSink()]);
+}
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
+$("store-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const fd = new FormData(ev.target);
+  const prefixes = String(fd.get("type_prefixes") || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  await api("/api/v1/stores", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: fd.get("name"),
+      url: fd.get("url"),
+      secret: fd.get("secret"),
+      type_prefixes: prefixes,
+      ordered: false,
+      rate: 5,
+      burst: 5
+    })
+  });
+  ev.target.reset();
+  await refreshStores();
+});
+
+$("frame-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const fd = new FormData(ev.target);
+  const payloadText = String(fd.get("payload") || "{}");
+  let extra;
+  try { extra = JSON.parse(payloadText); }
+  catch (err) { $("frame-result").textContent = "payload json: " + err; return; }
+  const lithology = extra.lithology || { code: "SS", percent: 80 };
+  const lag = extra.lag_depth || { measured_m: 1842.5 };
+  delete extra.lithology;
+  delete extra.lag_depth;
+  const bodyObj = {
+    type: fd.get("type"),
+    wellbore: fd.get("wellbore") || "",
+    lithology,
+    lag_depth: lag,
+    payload: extra
+  };
+  const body = JSON.stringify(bodyObj);
+  const ts = Math.floor(Date.now() / 1000);
+  const n = nonce();
+  const canonical = `v1.${ts}.${n}.${await sha256Hex(body)}`;
+  const sig = "v1=" + await hmacHex("dev-rig-secret", canonical);
+  try {
+    const res = await api("/api/v1/frames", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Mud-Timestamp": String(ts),
+        "X-Mud-Nonce": n,
+        "X-Mud-Signature": sig,
+        "Idempotency-Key": idemKey(),
+        "X-Mud-Source-Key": "rig"
+      },
+      body
+    });
+    $("frame-result").textContent = JSON.stringify(res, null, 2);
+    setTimeout(refreshAll, 400);
+  } catch (err) {
+    $("frame-result").textContent = String(err);
+  }
+});
+
+$("refresh").addEventListener("click", refreshAll);
+
+document.body.addEventListener("click", async (ev) => {
+  const t = ev.target;
+  if (!(t instanceof HTMLElement)) return;
+  if (t.dataset.toggle) {
+    const enabled = t.dataset.enabled !== "true";
+    await api(`/api/v1/stores/${t.dataset.toggle}/enable`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled })
+    });
+    await refreshStores();
+  }
+  if (t.dataset.replay) {
+    await api(`/api/v1/replay/${t.dataset.replay}`, { method: "POST" });
+    await refreshAll();
+  }
+});
+
+refreshAll();
+setInterval(refreshMeta, 3000);
