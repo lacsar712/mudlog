@@ -45,7 +45,7 @@ func Parse(body []byte) (Frame, error) {
 	}
 	var fr Frame
 	if err := json.Unmarshal(body, &fr); err != nil {
-		return Frame{}, fmt.Errorf("json: %v", err)
+		return Frame{}, fmt.Errorf("json: %w", err)
 	}
 	if err := ValidateType(fr.Type); err != nil {
 		return Frame{}, err
