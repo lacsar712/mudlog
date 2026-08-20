@@ -3,7 +3,6 @@ package ingest
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 
