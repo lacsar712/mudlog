@@ -96,6 +96,21 @@ func (b *Breaker) Allow() Decision {
 }
 
 func (b *Breaker) Success() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	switch b.state {
+	case HalfOpen:
+		// A probe that succeeds closes the breaker and clears the failure tally,
+		// so a later isolated failure does not count as "consecutive".
+		b.state = Closed
+		b.failures = 0
+		b.probesLeft = 0
+	case Closed:
+		// A successful delivery breaks the consecutive-failure run; reset the
+		// counter so the next failure starts a fresh streak instead of stacking
+		// on top of prior jitter.
+		b.failures = 0
+	}
 }
 
 func (b *Breaker) Failure() {
