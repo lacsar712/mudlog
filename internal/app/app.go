@@ -173,7 +173,9 @@ func (a *App) Replay(relayID string) (string, error) {
 		return "", os.ErrNotExist
 	}
 	j, err := replay.FromJournal(e, now)
-	_ = err
+	if err != nil {
+		return "", err
+	}
 	d, ok := a.Stores.Get(j.StoreID)
 	if !ok {
 		return "", os.ErrNotExist
