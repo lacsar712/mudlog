@@ -2,6 +2,8 @@ package classify
 
 import (
 	"errors"
+	"net"
+	"net/url"
 	"os"
 	"syscall"
 )
@@ -50,6 +52,23 @@ func HTTPStatus(code int) Kind {
 func NetError(err error) Kind {
 	if err == nil {
 		return Success
+	}
+	// http.Client.Timeout and dial timeouts surface as errors implementing
+	// net.Error (or *url.Error) whose Timeout() is true. They are not the
+	// os.ErrDeadlineExceeded sentinel, so the interface check below is the
+	// only reliable way to recognize them as retryable.
+	var nerr net.Error
+	if errors.As(err, &nerr) {
+		if nerr.Timeout() {
+			return Retryable
+		}
+	}
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		if ue.Timeout() {
+			return Retryable
+		}
+		err = ue.Err
 	}
 	if errors.Is(err, syscall.ECONNREFUSED) ||
 		errors.Is(err, syscall.ECONNRESET) ||
